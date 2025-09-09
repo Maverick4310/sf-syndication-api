@@ -4,20 +4,19 @@ import fetch from 'node-fetch';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Salesforce OAuth + instance details
+// Environment variables
 const SF_INSTANCE_URL = process.env.SF_INSTANCE_URL;
 const SF_CLIENT_ID = process.env.SF_CLIENT_ID;
 const SF_CLIENT_SECRET = process.env.SF_CLIENT_SECRET;
 const SF_USERNAME = process.env.SF_USERNAME;
 const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
-
-// Confirmation page base URL (VF or LWC page in Salesforce)
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
 let accessToken = null;
 
-// Get Salesforce access token
+// Helper: authenticate with Salesforce
 async function getAccessToken() {
+  console.log('🔑 Requesting new Salesforce access token...');
   const res = await fetch(`${SF_INSTANCE_URL}/services/oauth2/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -30,27 +29,36 @@ async function getAccessToken() {
     })
   });
 
+  console.log(`🔐 Token response status: ${res.status}`);
   if (!res.ok) {
-    throw new Error(`Failed to authenticate with Salesforce: ${res.status} ${await res.text()}`);
+    const errText = await res.text();
+    console.error('❌ Failed to authenticate with Salesforce:', errText);
+    throw new Error(`Auth failed: ${errText}`);
   }
 
   const data = await res.json();
+  console.log('✅ Access token received');
   accessToken = data.access_token;
   return accessToken;
 }
 
-// Route: sync and redirect
+// Route: sync an Opportunity
 app.get('/sync/:oppId', async (req, res) => {
+  const oppId = req.params.oppId;
+  console.log('➡️ Incoming request for Opportunity Id:', oppId);
+
   try {
-    const oppId = req.params.oppId;
     if (!oppId) {
-      return res.redirect(`${CONFIRM_URL}?message=Missing+Opportunity+Id`);
+      console.error('❌ No Opportunity Id provided');
+      return res.status(400).json({ status: 'FAIL', message: 'Missing Opportunity Id' });
     }
 
     if (!accessToken) {
+      console.log('⚡ No access token cached, requesting new one...');
       await getAccessToken();
     }
 
+    console.log('📡 Calling Salesforce Apex REST endpoint...');
     let sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
       method: 'POST',
       headers: {
@@ -59,8 +67,11 @@ app.get('/sync/:oppId', async (req, res) => {
       }
     });
 
-    // Handle token expiry
+    console.log('📡 Salesforce response status:', sfResponse.status);
+
+    // Handle expired token
     if (sfResponse.status === 401) {
+      console.warn('⚠️ Token expired, requesting new token...');
       await getAccessToken();
       sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
         method: 'POST',
@@ -69,24 +80,37 @@ app.get('/sync/:oppId', async (req, res) => {
           oppid: oppId
         }
       });
+      console.log('📡 Retry response status:', sfResponse.status);
     }
 
     const data = await sfResponse.json();
-    const msg = encodeURIComponent(
-      data.status === 'SUCCESS'
-        ? 'Status Updated Successfully'
-        : `Error: ${data.message}`
-    );
+    console.log('✅ Salesforce response body:', data);
 
-    // Redirect user to confirmation page with result
-    res.redirect(`${CONFIRM_URL}?message=${msg}`);
+    const msg = data.status === 'SUCCESS'
+      ? 'Status Updated Successfully'
+      : `Error: ${data.message}`;
+
+    // For API clients (like Postman) → JSON
+    if (req.headers['accept'] && req.headers['accept'].includes('application/json')) {
+      console.log('🔄 Returning JSON to client');
+      res.json({ status: data.status, message: msg });
+    } else {
+      console.log('🔄 Redirecting to confirmation page:', CONFIRM_URL);
+      res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent(msg)}`);
+    }
 
   } catch (err) {
-    const msg = encodeURIComponent(`Exception: ${err.message}`);
-    res.redirect(`${CONFIRM_URL}?message=${msg}`);
+    console.error('❌ Exception in /sync route:', err.message);
+
+    if (req.headers['accept'] && req.headers['accept'].includes('application/json')) {
+      res.status(500).json({ status: 'FAIL', message: err.message });
+    } else {
+      res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent('Exception: ' + err.message)}`);
+    }
   }
 });
 
+// Start server
 app.listen(PORT, () => {
-  console.log(`Render app running on port ${PORT}`);
+  console.log(`🚀 Render app running on port ${PORT}`);
 });
