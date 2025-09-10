@@ -15,11 +15,17 @@ const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/Syndicat
 
 // Keywords (env override possible)
 const DEFAULT_KEYWORDS = [
+  // apply variations
   "apply", "apply now", "application", "apply online", "apply today",
+  // credit variations
   "credit", "credit app", "credit application", "credit approval", "get credit",
+  // finance/financing variations
   "finance", "financing", "financing options", "finance application",
   "finance request", "financing program", "get financed",
-  "loan", "loan application", "get approved", "pre-approve", "pre-approval"
+  // loan / pre-approval variations
+  "loan", "loan application", "get approved", "pre-approve", "pre-approval",
+  // quote variations
+  "quote", "get a quote", "request a quote"
 ];
 const KEYWORDS = process.env.CREDIT_KEYWORDS
   ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
@@ -27,8 +33,8 @@ const KEYWORDS = process.env.CREDIT_KEYWORDS
 
 // Candidate link triggers (for crawling beyond homepage)
 const LINK_TRIGGERS = [
-  "finance", "credit", "apply", "loan",
-  "inventory", "equipment", "machinery", "trucks", "products"
+  "finance", "credit", "apply", "loan", "inventory",
+  "equipment", "machinery", "trucks", "products", "quote"
 ];
 
 let accessToken = null;
@@ -136,8 +142,9 @@ app.get('/dealer/check', async (req, res) => {
   if (!baseUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
 
   try {
-    // Step 1: Scan homepage
     const results = [];
+
+    // Step 1: Scan homepage
     const homepageResult = await scanPage(baseUrl);
     results.push(homepageResult);
 
@@ -153,7 +160,6 @@ app.get('/dealer/check', async (req, res) => {
         const txt = $(el).text().toLowerCase();
         const fullUrl = new URL(href, baseUrl).toString();
 
-        // If the href OR the label contains a trigger word
         if (
           LINK_TRIGGERS.some(trigger =>
             href.toLowerCase().includes(trigger) || txt.includes(trigger)
@@ -170,12 +176,13 @@ app.get('/dealer/check', async (req, res) => {
       }
     }
 
-    // Step 4: Aggregate results
-    const matched = results.filter(r => r.hasCreditApp);
+    // Step 4: Only return the positive matches
+    const positives = results.filter(r => r.hasCreditApp);
+
     res.json({
       baseUrl,
-      hasCreditApp: matched.length > 0,
-      details: results
+      hasCreditApp: positives.length > 0,
+      hits: positives
     });
   } catch (err) {
     res.status(500).json({ baseUrl, error: err.message, hasCreditApp: false });
