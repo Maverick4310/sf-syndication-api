@@ -22,7 +22,8 @@ const DEFAULT_KEYWORDS = [
   "finance request", "financing program", "get financed",
   "loan", "loan application", "get approved", "pre-approve", "pre-approval",
   "get a quote", "request a quote", "quote request",
-  "shop", "shopping", "add to cart", "checkout", "buy now", "order now"
+  "shop", "shopping", "add to cart", "checkout", "buy now", "order now",
+  "preowned" // 🔹 new keyword
 ];
 const KEYWORDS = process.env.CREDIT_KEYWORDS
   ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
@@ -32,12 +33,12 @@ const KEYWORDS = process.env.CREDIT_KEYWORDS
 const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
   "equipment", "machinery", "trucks", "products", "quote",
-  "shop", "cart", "checkout", "buy", "order"
+  "shop", "cart", "checkout", "buy", "order", "preowned"
 ];
 
 // Expanded scan triggers
 const EXPANDED_SCAN_TRIGGERS = [
-  "used", "inventory", "equipment", "product", "shop", "store",
+  "used", "preowned", "inventory", "equipment", "product", "shop", "store",
   "services", "support", "about", "company",
   "promotions", "specials", "offers", "deals"
 ];
