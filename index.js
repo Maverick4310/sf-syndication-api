@@ -105,27 +105,26 @@ async function getAccessToken() {
 }
 
 // --------------------------------------------------
-// Helper: Scan a single page for keywords
+// Helper: Scan a single page for actionable financing elements
 // --------------------------------------------------
 async function scanPage(url) {
   try {
     const response = await fetch(url, { timeout: 15000 });
     const html = await response.text();
-    const text = html.toLowerCase();
     let matchedKeywords = [];
 
-    // Check body text
-    KEYWORDS.forEach((kw) => {
-      if (text.includes(kw)) matchedKeywords.push(kw);
-    });
-
-    // Check links/buttons
     const $ = cheerio.load(html);
-    $('a, button').each((_, el) => {
+
+    // Only scan actionable elements
+    $('a, button, form').each((_, el) => {
       const txt = $(el).text().toLowerCase();
       const href = ($(el).attr('href') || '').toLowerCase();
+      const action = ($(el).attr('action') || '').toLowerCase();
+
       KEYWORDS.forEach((kw) => {
-        if (txt.includes(kw) || href.includes(kw)) matchedKeywords.push(kw);
+        if (txt.includes(kw) || href.includes(kw) || action.includes(kw)) {
+          matchedKeywords.push(kw);
+        }
       });
     });
 
