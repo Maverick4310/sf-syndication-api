@@ -14,6 +14,7 @@ const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
 // Keywords (env override possible)
+// 🔹 "quote" now restricted to "request a quote" or "get a quote"
 const DEFAULT_KEYWORDS = [
   // apply variations
   "apply", "apply now", "application", "apply online", "apply today",
@@ -24,8 +25,8 @@ const DEFAULT_KEYWORDS = [
   "finance request", "financing program", "get financed",
   // loan / pre-approval variations
   "loan", "loan application", "get approved", "pre-approve", "pre-approval",
-  // quote variations
-  "quote", "get a quote", "request a quote",
+  // quote variations (stricter)
+  "get a quote", "request a quote", "quote request",
   // e-commerce variations
   "shop", "shopping", "add to cart", "checkout", "buy now", "order now"
 ];
