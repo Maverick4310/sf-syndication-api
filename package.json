@@ -1,7 +1,7 @@
 {
   "name": "sf-syndication-render",
   "version": "1.0.0",
-  "description": "Render service to call Salesforce Syndication REST API",
+  "description": "Render service to call Salesforce Syndication REST API and dealer credit app checker",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "cheerio": "^1.0.0-rc.12"
   }
 }
