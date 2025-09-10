@@ -112,9 +112,9 @@ async function scanStatic(url) {
 
     // 🔹 Also scan actionable elements
     $('a, button, form').each((_, el) => {
-      const txt = $(el).text().toLowerCase();
-      const href = ($(el).attr('href') || '').toLowerCase();
-      const action = ($(el).attr('action') || '').toLowerCase();
+      const txt = ($(el).text() || '').toLowerCase().trim();
+      const href = (($(el).attr('href') || '').toLowerCase().trim()).replace(/&amp;/g, "&");
+      const action = (($(el).attr('action') || '').toLowerCase().trim());
 
       KEYWORDS.forEach((kw) => {
         if (txt.includes(kw) || href.includes(kw) || action.includes(kw)) {
@@ -203,16 +203,21 @@ app.get('/dealer/check', async (req, res) => {
 
       const candidateLinks = [];
       $('a').each((_, el) => {
-        const href = $(el).attr('href') || '';
-        const txt = $(el).text().toLowerCase();
-        const fullUrl = new URL(href, resolvedUrl).toString();
+        let href = (($(el).attr('href') || '').toLowerCase().trim()).replace(/&amp;/g, "&");
+        let txt = ($(el).text() || '').toLowerCase().trim();
 
-        if (
-          LINK_TRIGGERS.some(trigger =>
-            href.toLowerCase().includes(trigger) || txt.includes(trigger)
-          )
-        ) {
-          candidateLinks.push(fullUrl);
+        try {
+          const fullUrl = new URL(href, resolvedUrl).toString();
+
+          if (
+            LINK_TRIGGERS.some(trigger =>
+              href.includes(trigger) || txt.includes(trigger)
+            )
+          ) {
+            candidateLinks.push(fullUrl);
+          }
+        } catch (e) {
+          // skip malformed hrefs
         }
       });
 
