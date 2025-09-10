@@ -69,9 +69,9 @@ async function resolveUrl(rawUrl) {
   // Try each URL until one responds
   for (let url of attempts) {
     try {
-      const resp = await fetch(url, { method: "HEAD", timeout: 5000 });
+      const resp = await fetch(url, { method: "HEAD", redirect: "follow", timeout: 5000 });
       if (resp.status >= 200 && resp.status < 400) {
-        return url; // success
+        return resp.url; // ✅ capture final resolved URL after redirects
       }
     } catch (err) {
       // continue to next attempt
@@ -181,17 +181,19 @@ app.get('/sync/:oppId', async (req, res) => {
 // Route: Dealer Credit/Financing Application Checker
 // --------------------------------------------------
 app.get('/dealer/check', async (req, res) => {
-  let baseUrl = await resolveUrl(req.query.url);
-  if (!baseUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
+  const inputUrl = req.query.url;
+  let resolvedUrl = await resolveUrl(inputUrl);
+  if (!resolvedUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
 
   try {
     // 🔹 Step 0: Check if site is active
     let siteActive = false;
     let statusCode = null;
     try {
-      const headResp = await fetch(baseUrl, { method: 'HEAD', timeout: 5000 });
+      const headResp = await fetch(resolvedUrl, { method: 'HEAD', redirect: "follow", timeout: 5000 });
       statusCode = headResp.status;
       siteActive = statusCode >= 200 && statusCode < 400;
+      resolvedUrl = headResp.url; // update with final redirect
     } catch (err) {
       siteActive = false;
     }
@@ -199,12 +201,12 @@ app.get('/dealer/check', async (req, res) => {
     const results = [];
 
     // Step 1: Scan homepage
-    const homepageResult = await scanPage(baseUrl);
+    const homepageResult = await scanPage(resolvedUrl);
     results.push(homepageResult);
 
     // Step 2: Collect candidate links from homepage
     if (!homepageResult.error) {
-      const response = await fetch(baseUrl, { timeout: 15000 });
+      const response = await fetch(resolvedUrl, { timeout: 15000 });
       const html = await response.text();
       const $ = cheerio.load(html);
 
@@ -212,7 +214,7 @@ app.get('/dealer/check', async (req, res) => {
       $('a').each((_, el) => {
         const href = $(el).attr('href') || '';
         const txt = $(el).text().toLowerCase();
-        const fullUrl = new URL(href, baseUrl).toString();
+        const fullUrl = new URL(href, resolvedUrl).toString();
 
         if (
           LINK_TRIGGERS.some(trigger =>
@@ -234,14 +236,15 @@ app.get('/dealer/check', async (req, res) => {
     const positives = results.filter(r => r.hasCreditApp);
 
     res.json({
-      baseUrl,
+      inputUrl,
+      resolvedUrl,
       siteActive,
       statusCode,
       hasCreditApp: positives.length > 0,
       hits: positives
     });
   } catch (err) {
-    res.status(500).json({ baseUrl, error: err.message, hasCreditApp: false });
+    res.status(500).json({ inputUrl, resolvedUrl, error: err.message, hasCreditApp: false });
   }
 });
 
