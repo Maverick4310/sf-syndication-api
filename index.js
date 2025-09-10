@@ -43,6 +43,46 @@ const LINK_TRIGGERS = [
 let accessToken = null;
 
 // --------------------------------------------------
+// Helper: Normalize and Resolve URL with Fallbacks
+// --------------------------------------------------
+async function resolveUrl(rawUrl) {
+  if (!rawUrl) return null;
+  let input = rawUrl.trim();
+
+  // Already has protocol? return directly
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    return input;
+  }
+
+  const attempts = [];
+
+  // If no protocol → try https first
+  attempts.push("https://" + input);
+  attempts.push("http://" + input);
+
+  // If no 'www.' in original → also try with www
+  if (!input.startsWith("www.")) {
+    attempts.push("https://www." + input);
+    attempts.push("http://www." + input);
+  }
+
+  // Try each URL until one responds
+  for (let url of attempts) {
+    try {
+      const resp = await fetch(url, { method: "HEAD", timeout: 5000 });
+      if (resp.status >= 200 && resp.status < 400) {
+        return url; // success
+      }
+    } catch (err) {
+      // continue to next attempt
+    }
+  }
+
+  // If all attempts fail, default to https:// + input
+  return "https://" + input;
+}
+
+// --------------------------------------------------
 // Helper: Authenticate with Salesforce
 // --------------------------------------------------
 async function getAccessToken() {
@@ -141,7 +181,7 @@ app.get('/sync/:oppId', async (req, res) => {
 // Route: Dealer Credit/Financing Application Checker
 // --------------------------------------------------
 app.get('/dealer/check', async (req, res) => {
-  const baseUrl = req.query.url;
+  let baseUrl = await resolveUrl(req.query.url);
   if (!baseUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
 
   try {
