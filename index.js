@@ -145,6 +145,17 @@ app.get('/dealer/check', async (req, res) => {
   if (!baseUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
 
   try {
+    // 🔹 Step 0: Check if site is active
+    let siteActive = false;
+    let statusCode = null;
+    try {
+      const headResp = await fetch(baseUrl, { method: 'HEAD', timeout: 5000 });
+      statusCode = headResp.status;
+      siteActive = statusCode >= 200 && statusCode < 400;
+    } catch (err) {
+      siteActive = false;
+    }
+
     const results = [];
 
     // Step 1: Scan homepage
@@ -184,6 +195,8 @@ app.get('/dealer/check', async (req, res) => {
 
     res.json({
       baseUrl,
+      siteActive,
+      statusCode,
       hasCreditApp: positives.length > 0,
       hits: positives
     });
