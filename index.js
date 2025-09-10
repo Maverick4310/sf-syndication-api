@@ -1,6 +1,7 @@
 import express from 'express';
 import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
+import puppeteer from 'puppeteer';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,34 +15,27 @@ const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
 // Keywords (env override possible)
-// 🔹 "quote" restricted to specific phrases to avoid ESPN false positives
 const DEFAULT_KEYWORDS = [
-  // apply variations
   "apply", "apply now", "application", "apply online", "apply today",
-  // credit variations
   "credit", "credit app", "credit application", "credit approval", "get credit",
-  // finance/financing variations
   "finance", "financing", "financing options", "finance application",
   "finance request", "financing program", "get financed",
-  // loan / pre-approval variations
   "loan", "loan application", "get approved", "pre-approve", "pre-approval",
-  // quote variations (stricter)
   "get a quote", "request a quote", "quote request",
-  // e-commerce variations
   "shop", "shopping", "add to cart", "checkout", "buy now", "order now"
 ];
 const KEYWORDS = process.env.CREDIT_KEYWORDS
   ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
   : DEFAULT_KEYWORDS.map(k => k.toLowerCase());
 
-// Candidate link triggers (for crawling beyond homepage)
+// Candidate link triggers
 const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
   "equipment", "machinery", "trucks", "products", "quote",
   "shop", "cart", "checkout", "buy", "order"
 ];
 
-// Expanded scan trigger words → allow full-text scanning on these pages
+// Expanded scan triggers
 const EXPANDED_SCAN_TRIGGERS = [
   "used", "inventory", "equipment", "product", "shop", "store",
   "services", "support", "about", "company",
@@ -57,36 +51,29 @@ async function resolveUrl(rawUrl) {
   if (!rawUrl) return null;
   let input = rawUrl.trim();
 
-  // Already has protocol? return directly
   if (input.startsWith("http://") || input.startsWith("https://")) {
     return input;
   }
 
-  const attempts = [];
+  const attempts = [
+    "https://" + input,
+    "http://" + input
+  ];
 
-  // If no protocol → try https first
-  attempts.push("https://" + input);
-  attempts.push("http://" + input);
-
-  // If no 'www.' in original → also try with www
   if (!input.startsWith("www.")) {
     attempts.push("https://www." + input);
     attempts.push("http://www." + input);
   }
 
-  // Try each URL until one responds
   for (let url of attempts) {
     try {
-      const resp = await fetch(url, { method: "GET", redirect: "follow", timeout: 8000 });
-      if (resp.status >= 200 && resp.status < 400) {
-        return resp.url; // ✅ final URL after redirect
+      const resp = await fetch(url, { method: "GET", redirect: "follow", timeout: 12000 });
+      if (resp.status >= 200 && resp.status < 500) {
+        return resp.url;
       }
-    } catch (err) {
-      // continue to next attempt
-    }
+    } catch (err) {}
   }
 
-  // If all attempts fail, default to https:// + input
   return "https://" + input;
 }
 
@@ -113,28 +100,24 @@ async function getAccessToken() {
 }
 
 // --------------------------------------------------
-// Helper: Scan a single page for financing signals
+// Helper: Scan page with Cheerio (static HTML)
 // --------------------------------------------------
-async function scanPage(url) {
+async function scanStatic(url) {
   try {
     const response = await fetch(url, { timeout: 15000 });
     const html = await response.text();
     let matchedKeywords = [];
 
     const $ = cheerio.load(html);
-
-    // 🔹 Decide scanning mode based on URL
     const expandedMode = EXPANDED_SCAN_TRIGGERS.some(trigger => url.toLowerCase().includes(trigger));
 
     if (expandedMode) {
-      // ✅ Expanded mode → scan all text plus actionable elements
       const pageText = $('body').text().toLowerCase();
       KEYWORDS.forEach((kw) => {
         if (pageText.includes(kw)) matchedKeywords.push(kw);
       });
     }
 
-    // Always scan actionable elements
     $('a, button, form').each((_, el) => {
       const txt = $(el).text().toLowerCase();
       const href = ($(el).attr('href') || '').toLowerCase();
@@ -158,42 +141,34 @@ async function scanPage(url) {
 }
 
 // --------------------------------------------------
-// Route: Sync an Opportunity (existing)
+// Helper: Scan page with Puppeteer (dynamic JS)
 // --------------------------------------------------
-app.get('/sync/:oppId', async (req, res) => {
-  const oppId = req.params.oppId;
+async function scanDynamic(url) {
+  let browser;
   try {
-    if (!oppId) return res.status(400).json({ status: 'FAIL', message: 'Missing Opportunity Id' });
-    if (!accessToken) await getAccessToken();
+    browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox"] });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 20000 });
 
-    let sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, oppid: oppId }
+    const bodyText = await page.evaluate(() => document.body.innerText.toLowerCase());
+    let matchedKeywords = [];
+
+    KEYWORDS.forEach((kw) => {
+      if (bodyText.includes(kw)) matchedKeywords.push(kw);
     });
 
-    if (sfResponse.status === 401) {
-      await getAccessToken();
-      sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}`, oppid: oppId }
-      });
-    }
-
-    const data = await sfResponse.json();
-    const msg = data.status === 'SUCCESS' ? 'Status Updated Successfully' : `Error: ${data.message}`;
-    if (req.headers['accept']?.includes('application/json')) {
-      res.json({ status: data.status, message: msg });
-    } else {
-      res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent(msg)}`);
-    }
+    await browser.close();
+    return {
+      url,
+      hasCreditApp: matchedKeywords.length > 0,
+      matchedKeywords: [...new Set(matchedKeywords)],
+      usedDynamic: true
+    };
   } catch (err) {
-    if (req.headers['accept']?.includes('application/json')) {
-      res.status(500).json({ status: 'FAIL', message: err.message });
-    } else {
-      res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent('Exception: ' + err.message)}`);
-    }
+    if (browser) await browser.close();
+    return { url, error: "Puppeteer error: " + err.message, hasCreditApp: false, matchedKeywords: [], usedDynamic: true };
   }
-});
+}
 
 // --------------------------------------------------
 // Route: Dealer Credit/Financing Application Checker
@@ -204,25 +179,30 @@ app.get('/dealer/check', async (req, res) => {
   if (!resolvedUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
 
   try {
-    // 🔹 Step 0: Check if site is active
+    // Site active check
     let siteActive = false;
     let statusCode = null;
     try {
-      const headResp = await fetch(resolvedUrl, { method: 'GET', redirect: "follow", timeout: 8000 });
-      statusCode = headResp.status;
-      siteActive = statusCode >= 200 && statusCode < 400;
-      resolvedUrl = headResp.url; // ✅ update with final redirect
+      const resp = await fetch(resolvedUrl, { method: 'GET', redirect: "follow", timeout: 12000 });
+      statusCode = resp.status;
+      siteActive = statusCode >= 200 && statusCode < 500;
+      resolvedUrl = resp.url;
     } catch (err) {
       siteActive = false;
     }
 
     const results = [];
 
-    // Step 1: Scan homepage
-    const homepageResult = await scanPage(resolvedUrl);
+    // Scan homepage (static)
+    let homepageResult = await scanStatic(resolvedUrl);
+
+    // 🔹 If no hits → fallback to Puppeteer (dynamic scan)
+    if (!homepageResult.hasCreditApp) {
+      homepageResult = await scanDynamic(resolvedUrl);
+    }
     results.push(homepageResult);
 
-    // Step 2: Collect candidate links from homepage
+    // Candidate links from homepage
     if (!homepageResult.error) {
       const response = await fetch(resolvedUrl, { timeout: 15000 });
       const html = await response.text();
@@ -243,14 +223,15 @@ app.get('/dealer/check', async (req, res) => {
         }
       });
 
-      // Step 3: Scan candidate links (limit 5)
       for (let link of candidateLinks.slice(0, 5)) {
-        const result = await scanPage(link);
+        let result = await scanStatic(link);
+        if (!result.hasCreditApp) {
+          result = await scanDynamic(link); // fallback
+        }
         results.push(result);
       }
     }
 
-    // Step 4: Only return the positive matches
     const positives = results.filter(r => r.hasCreditApp);
 
     res.json({
