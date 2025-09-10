@@ -23,7 +23,7 @@ const DEFAULT_KEYWORDS = [
   "loan", "loan application", "get approved", "pre-approve", "pre-approval",
   "get a quote", "request a quote", "quote request",
   "shop", "shopping", "add to cart", "checkout", "buy now", "order now",
-  "preowned" // 🔹 new keyword
+  "preowned"
 ];
 const KEYWORDS = process.env.CREDIT_KEYWORDS
   ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
@@ -34,13 +34,6 @@ const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
   "equipment", "machinery", "trucks", "products", "quote",
   "shop", "cart", "checkout", "buy", "order", "preowned"
-];
-
-// Expanded scan triggers
-const EXPANDED_SCAN_TRIGGERS = [
-  "used", "preowned", "inventory", "equipment", "product", "shop", "store",
-  "services", "support", "about", "company",
-  "promotions", "specials", "offers", "deals"
 ];
 
 let accessToken = null;
@@ -101,7 +94,7 @@ async function getAccessToken() {
 }
 
 // --------------------------------------------------
-// Helper: Scan page with Cheerio (static HTML)
+// Helper: Scan page with Cheerio (loose, full text + elements)
 // --------------------------------------------------
 async function scanStatic(url) {
   try {
@@ -110,15 +103,14 @@ async function scanStatic(url) {
     let matchedKeywords = [];
 
     const $ = cheerio.load(html);
-    const expandedMode = EXPANDED_SCAN_TRIGGERS.some(trigger => url.toLowerCase().includes(trigger));
 
-    if (expandedMode) {
-      const pageText = $('body').text().toLowerCase();
-      KEYWORDS.forEach((kw) => {
-        if (pageText.includes(kw)) matchedKeywords.push(kw);
-      });
-    }
+    // 🔹 Scan full body text
+    const pageText = $('body').text().toLowerCase();
+    KEYWORDS.forEach((kw) => {
+      if (pageText.includes(kw)) matchedKeywords.push(kw);
+    });
 
+    // 🔹 Also scan actionable elements
     $('a, button, form').each((_, el) => {
       const txt = $(el).text().toLowerCase();
       const href = ($(el).attr('href') || '').toLowerCase();
@@ -142,7 +134,7 @@ async function scanStatic(url) {
 }
 
 // --------------------------------------------------
-// Helper: Scan page with Puppeteer (dynamic JS)
+// Helper: Scan page with Puppeteer (dynamic JS fallback)
 // --------------------------------------------------
 async function scanDynamic(url) {
   let browser;
@@ -194,10 +186,10 @@ app.get('/dealer/check', async (req, res) => {
 
     const results = [];
 
-    // Scan homepage (static)
+    // Scan homepage
     let homepageResult = await scanStatic(resolvedUrl);
 
-    // 🔹 If no hits → fallback to Puppeteer (dynamic scan)
+    // 🔹 Fallback: if no hits → Puppeteer
     if (!homepageResult.hasCreditApp) {
       homepageResult = await scanDynamic(resolvedUrl);
     }
@@ -253,5 +245,4 @@ app.listen(PORT, () => {
   console.log(`🚀 Render app running on port ${PORT}`);
   console.log(`📋 Using keywords: ${KEYWORDS.join(', ')}`);
   console.log(`🔗 Link triggers: ${LINK_TRIGGERS.join(', ')}`);
-  console.log(`🔍 Expanded scan on: ${EXPANDED_SCAN_TRIGGERS.join(', ')}`);
 });
