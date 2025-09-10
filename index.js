@@ -14,7 +14,7 @@ const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
 // Keywords (env override possible)
-// 🔹 "quote" now restricted to "request a quote" or "get a quote"
+// 🔹 "quote" restricted to specific phrases to avoid ESPN false positives
 const DEFAULT_KEYWORDS = [
   // apply variations
   "apply", "apply now", "application", "apply online", "apply today",
@@ -39,6 +39,13 @@ const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
   "equipment", "machinery", "trucks", "products", "quote",
   "shop", "cart", "checkout", "buy", "order"
+];
+
+// Expanded scan trigger words → allow full-text scanning on these pages
+const EXPANDED_SCAN_TRIGGERS = [
+  "used", "inventory", "equipment", "product", "shop", "store",
+  "services", "support", "about", "company",
+  "promotions", "specials", "offers", "deals"
 ];
 
 let accessToken = null;
@@ -106,7 +113,7 @@ async function getAccessToken() {
 }
 
 // --------------------------------------------------
-// Helper: Scan a single page for actionable financing elements
+// Helper: Scan a single page for financing signals
 // --------------------------------------------------
 async function scanPage(url) {
   try {
@@ -116,7 +123,18 @@ async function scanPage(url) {
 
     const $ = cheerio.load(html);
 
-    // Only scan actionable elements
+    // 🔹 Decide scanning mode based on URL
+    const expandedMode = EXPANDED_SCAN_TRIGGERS.some(trigger => url.toLowerCase().includes(trigger));
+
+    if (expandedMode) {
+      // ✅ Expanded mode → scan all text plus actionable elements
+      const pageText = $('body').text().toLowerCase();
+      KEYWORDS.forEach((kw) => {
+        if (pageText.includes(kw)) matchedKeywords.push(kw);
+      });
+    }
+
+    // Always scan actionable elements
     $('a, button, form').each((_, el) => {
       const txt = $(el).text().toLowerCase();
       const href = ($(el).attr('href') || '').toLowerCase();
@@ -253,4 +271,5 @@ app.listen(PORT, () => {
   console.log(`🚀 Render app running on port ${PORT}`);
   console.log(`📋 Using keywords: ${KEYWORDS.join(', ')}`);
   console.log(`🔗 Link triggers: ${LINK_TRIGGERS.join(', ')}`);
+  console.log(`🔍 Expanded scan on: ${EXPANDED_SCAN_TRIGGERS.join(', ')}`);
 });
