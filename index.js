@@ -1,5 +1,6 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import * as cheerio from 'cheerio'; // for parsing HTML
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -107,6 +108,59 @@ app.get('/sync/:oppId', async (req, res) => {
     } else {
       res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent('Exception: ' + err.message)}`);
     }
+  }
+});
+
+// --------------------------------------------------
+// NEW ROUTE: Dealer Credit Application Checker
+// --------------------------------------------------
+app.get('/dealer/check', async (req, res) => {
+  const url = req.query.url;
+  if (!url) {
+    return res.status(400).json({ error: 'Missing ?url parameter' });
+  }
+
+  try {
+    console.log(`🔍 Checking dealer site: ${url}`);
+    const response = await fetch(url, { timeout: 10000 });
+    const html = await response.text();
+    const text = html.toLowerCase();
+
+    const keywords = [
+      'apply for credit',
+      'credit application',
+      'finance application',
+      'get pre-approved',
+      'apply now'
+    ];
+
+    // 1. Check body text
+    const hasCreditAppText = keywords.some((kw) => text.includes(kw));
+
+    // 2. Check links/buttons
+    const $ = cheerio.load(html);
+    const links = [];
+    $('a, button').each((_, el) => {
+      const txt = $(el).text().toLowerCase();
+      const href = ($(el).attr('href') || '').toLowerCase();
+      links.push(txt, href);
+    });
+
+    const hasCreditAppLink = keywords.some((kw) =>
+      links.some((l) => l.includes(kw))
+    );
+
+    res.json({
+      url,
+      hasCreditApp: hasCreditAppText || hasCreditAppLink,
+      foundBy: {
+        text: hasCreditAppText,
+        link: hasCreditAppLink
+      }
+    });
+  } catch (err) {
+    console.error(`❌ Error fetching dealer site: ${err.message}`);
+    res.status(500).json({ url, error: err.message, hasCreditApp: false });
   }
 });
 
