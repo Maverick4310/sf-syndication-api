@@ -6,7 +6,7 @@ import puppeteer from 'puppeteer';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Environment variables
+// Env vars for Salesforce
 const SF_INSTANCE_URL = process.env.SF_INSTANCE_URL;
 const SF_CLIENT_ID = process.env.SF_CLIENT_ID;
 const SF_CLIENT_SECRET = process.env.SF_CLIENT_SECRET;
@@ -14,7 +14,9 @@ const SF_USERNAME = process.env.SF_USERNAME;
 const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
-// Keywords (env override possible)
+let accessToken = null;
+
+// Keywords
 const DEFAULT_KEYWORDS = [
   "apply", "apply now", "application", "apply online", "apply today",
   "credit", "credit app", "credit application", "credit approval", "get credit",
@@ -25,54 +27,16 @@ const DEFAULT_KEYWORDS = [
   "shop", "shopping", "add to cart", "checkout", "buy now", "order now",
   "preowned"
 ];
-const KEYWORDS = process.env.CREDIT_KEYWORDS
-  ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
-  : DEFAULT_KEYWORDS.map(k => k.toLowerCase());
+const KEYWORDS = DEFAULT_KEYWORDS.map(k => k.toLowerCase());
 
-// Candidate link triggers
 const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
   "equipment", "machinery", "trucks", "products", "quote",
   "shop", "cart", "checkout", "buy", "order", "preowned"
 ];
 
-let accessToken = null;
-
 // --------------------------------------------------
-// Helper: Normalize and Resolve URL with Redirects
-// --------------------------------------------------
-async function resolveUrl(rawUrl) {
-  if (!rawUrl) return null;
-  let input = rawUrl.trim();
-
-  if (input.startsWith("http://") || input.startsWith("https://")) {
-    return input;
-  }
-
-  const attempts = [
-    "https://" + input,
-    "http://" + input
-  ];
-
-  if (!input.startsWith("www.")) {
-    attempts.push("https://www." + input);
-    attempts.push("http://www." + input);
-  }
-
-  for (let url of attempts) {
-    try {
-      const resp = await fetch(url, { method: "GET", redirect: "follow", timeout: 12000 });
-      if (resp.status >= 200 && resp.status < 500) {
-        return resp.url;
-      }
-    } catch (err) {}
-  }
-
-  return "https://" + input;
-}
-
-// --------------------------------------------------
-// Helper: Authenticate with Salesforce
+// Salesforce Auth
 // --------------------------------------------------
 async function getAccessToken() {
   const res = await fetch(`${SF_INSTANCE_URL}/services/oauth2/token`, {
@@ -94,7 +58,42 @@ async function getAccessToken() {
 }
 
 // --------------------------------------------------
-// Helper: Scan page with Cheerio (loose, full text + elements)
+// Route 1: Syndication API
+// --------------------------------------------------
+app.get('/sync/:oppId', async (req, res) => {
+  const oppId = req.params.oppId;
+  try {
+    if (!oppId) return res.status(400).json({ status: 'FAIL', message: 'Missing Opportunity Id' });
+    if (!accessToken) await getAccessToken();
+
+    let sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, oppid: oppId }
+    });
+
+    if (sfResponse.status === 401) {
+      await getAccessToken();
+      sfResponse = await fetch(`${SF_INSTANCE_URL}/services/apexrest/syndication/request`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, oppid: oppId }
+      });
+    }
+
+    const data = await sfResponse.json();
+    const msg = data.status === 'SUCCESS' ? 'Status Updated Successfully' : `Error: ${data.message}`;
+
+    if (req.headers['accept']?.includes('application/json')) {
+      res.json({ status: data.status, message: msg });
+    } else {
+      res.redirect(`${CONFIRM_URL}?message=${encodeURIComponent(msg)}`);
+    }
+  } catch (err) {
+    res.status(500).json({ status: 'FAIL', message: err.message });
+  }
+});
+
+// --------------------------------------------------
+// Dealer Scanning Helpers
 // --------------------------------------------------
 async function scanStatic(url) {
   try {
@@ -104,13 +103,13 @@ async function scanStatic(url) {
 
     const $ = cheerio.load(html);
 
-    // 🔹 Scan full body text
+    // Full text
     const pageText = $('body').text().toLowerCase();
     KEYWORDS.forEach((kw) => {
       if (pageText.includes(kw)) matchedKeywords.push(kw);
     });
 
-    // 🔹 Also scan actionable elements
+    // Elements
     $('a, button, form').each((_, el) => {
       const txt = ($(el).text() || '').toLowerCase().trim();
       const href = (($(el).attr('href') || '').toLowerCase().trim()).replace(/&amp;/g, "&");
@@ -123,19 +122,12 @@ async function scanStatic(url) {
       });
     });
 
-    return {
-      url,
-      hasCreditApp: matchedKeywords.length > 0,
-      matchedKeywords: [...new Set(matchedKeywords)]
-    };
+    return { url, hasCreditApp: matchedKeywords.length > 0, matchedKeywords: [...new Set(matchedKeywords)] };
   } catch (err) {
     return { url, error: err.message, hasCreditApp: false, matchedKeywords: [] };
   }
 }
 
-// --------------------------------------------------
-// Helper: Scan page with Puppeteer (dynamic JS fallback)
-// --------------------------------------------------
 async function scanDynamic(url) {
   let browser;
   try {
@@ -145,18 +137,12 @@ async function scanDynamic(url) {
 
     const bodyText = await page.evaluate(() => document.body.innerText.toLowerCase());
     let matchedKeywords = [];
-
     KEYWORDS.forEach((kw) => {
       if (bodyText.includes(kw)) matchedKeywords.push(kw);
     });
 
     await browser.close();
-    return {
-      url,
-      hasCreditApp: matchedKeywords.length > 0,
-      matchedKeywords: [...new Set(matchedKeywords)],
-      usedDynamic: true
-    };
+    return { url, hasCreditApp: matchedKeywords.length > 0, matchedKeywords: [...new Set(matchedKeywords)], usedDynamic: true };
   } catch (err) {
     if (browser) await browser.close();
     return { url, error: "Puppeteer error: " + err.message, hasCreditApp: false, matchedKeywords: [], usedDynamic: true };
@@ -164,15 +150,16 @@ async function scanDynamic(url) {
 }
 
 // --------------------------------------------------
-// Route: Dealer Credit/Financing Application Checker
+// Route 2: Dealer Financing Scanner
 // --------------------------------------------------
 app.get('/dealer/check', async (req, res) => {
   const inputUrl = req.query.url;
-  let resolvedUrl = await resolveUrl(inputUrl);
-  if (!resolvedUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
+  if (!inputUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
+
+  let resolvedUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
 
   try {
-    // Site active check
+    // Check site
     let siteActive = false;
     let statusCode = null;
     try {
@@ -185,17 +172,11 @@ app.get('/dealer/check', async (req, res) => {
     }
 
     const results = [];
-
-    // Scan homepage
     let homepageResult = await scanStatic(resolvedUrl);
-
-    // 🔹 Fallback: if no hits → Puppeteer
-    if (!homepageResult.hasCreditApp) {
-      homepageResult = await scanDynamic(resolvedUrl);
-    }
+    if (!homepageResult.hasCreditApp) homepageResult = await scanDynamic(resolvedUrl);
     results.push(homepageResult);
 
-    // Candidate links from homepage
+    // Candidate links
     if (!homepageResult.error) {
       const response = await fetch(resolvedUrl, { timeout: 15000 });
       const html = await response.text();
@@ -205,41 +186,24 @@ app.get('/dealer/check', async (req, res) => {
       $('a').each((_, el) => {
         let href = (($(el).attr('href') || '').toLowerCase().trim()).replace(/&amp;/g, "&");
         let txt = ($(el).text() || '').toLowerCase().trim();
-
         try {
           const fullUrl = new URL(href, resolvedUrl).toString();
-
-          if (
-            LINK_TRIGGERS.some(trigger =>
-              href.includes(trigger) || txt.includes(trigger)
-            )
-          ) {
+          if (LINK_TRIGGERS.some(trigger => href.includes(trigger) || txt.includes(trigger))) {
             candidateLinks.push(fullUrl);
           }
-        } catch (e) {
-          // skip malformed hrefs
-        }
+        } catch (e) {}
       });
 
       for (let link of candidateLinks.slice(0, 5)) {
         let result = await scanStatic(link);
-        if (!result.hasCreditApp) {
-          result = await scanDynamic(link); // fallback
-        }
+        if (!result.hasCreditApp) result = await scanDynamic(link);
         results.push(result);
       }
     }
 
     const positives = results.filter(r => r.hasCreditApp);
 
-    res.json({
-      inputUrl,
-      resolvedUrl,
-      siteActive,
-      statusCode,
-      hasCreditApp: positives.length > 0,
-      hits: positives
-    });
+    res.json({ inputUrl, resolvedUrl, siteActive, statusCode, hasCreditApp: positives.length > 0, hits: positives });
   } catch (err) {
     res.status(500).json({ inputUrl, resolvedUrl, error: err.message, hasCreditApp: false });
   }
@@ -248,6 +212,5 @@ app.get('/dealer/check', async (req, res) => {
 // --------------------------------------------------
 app.listen(PORT, () => {
   console.log(`🚀 Render app running on port ${PORT}`);
-  console.log(`📋 Using keywords: ${KEYWORDS.join(', ')}`);
-  console.log(`🔗 Link triggers: ${LINK_TRIGGERS.join(', ')}`);
+  console.log(`📡 Routes available: /sync/:oppId and /dealer/check?url=...`);
 });
