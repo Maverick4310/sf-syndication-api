@@ -25,7 +25,9 @@ const DEFAULT_KEYWORDS = [
   // loan / pre-approval variations
   "loan", "loan application", "get approved", "pre-approve", "pre-approval",
   // quote variations
-  "quote", "get a quote", "request a quote"
+  "quote", "get a quote", "request a quote",
+  // e-commerce variations
+  "shop", "shopping", "add to cart", "checkout", "buy now"
 ];
 const KEYWORDS = process.env.CREDIT_KEYWORDS
   ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
@@ -34,7 +36,8 @@ const KEYWORDS = process.env.CREDIT_KEYWORDS
 // Candidate link triggers (for crawling beyond homepage)
 const LINK_TRIGGERS = [
   "finance", "credit", "apply", "loan", "inventory",
-  "equipment", "machinery", "trucks", "products", "quote"
+  "equipment", "machinery", "trucks", "products", "quote",
+  "shop", "cart", "checkout", "buy"
 ];
 
 let accessToken = null;
