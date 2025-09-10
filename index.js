@@ -13,6 +13,24 @@ const SF_USERNAME = process.env.SF_USERNAME;
 const SF_PASSWORD = process.env.SF_PASSWORD + process.env.SF_SECURITY_TOKEN;
 const CONFIRM_URL = process.env.CONFIRM_URL || `${SF_INSTANCE_URL}/apex/SyndicationConfirm`;
 
+// Keywords: load from ENV or fallback to defaults
+const DEFAULT_KEYWORDS = [
+  // apply variations
+  "apply", "apply now", "application", "apply online", "apply today",
+  // credit variations
+  "credit", "credit app", "credit application", "credit approval", "get credit",
+  // finance/financing variations
+  "finance", "financing", "financing options", "finance application",
+  "finance request", "financing program", "get financed",
+  // loan / pre-approval variations
+  "loan", "loan application", "get approved", "pre-approve", "pre-approval"
+];
+
+// Split environment variable by comma if defined
+const KEYWORDS = process.env.CREDIT_KEYWORDS
+  ? process.env.CREDIT_KEYWORDS.split(',').map(k => k.trim().toLowerCase())
+  : DEFAULT_KEYWORDS.map(k => k.toLowerCase());
+
 let accessToken = null;
 
 // Helper: authenticate with Salesforce
@@ -112,7 +130,7 @@ app.get('/sync/:oppId', async (req, res) => {
 });
 
 // --------------------------------------------------
-// NEW ROUTE: Dealer Credit Application Checker
+// NEW ROUTE: Dealer Credit/Financing Application Checker
 // --------------------------------------------------
 app.get('/dealer/check', async (req, res) => {
   const url = req.query.url;
@@ -122,33 +140,32 @@ app.get('/dealer/check', async (req, res) => {
 
   try {
     console.log(`🔍 Checking dealer site: ${url}`);
-    const response = await fetch(url, { timeout: 10000 });
+    const response = await fetch(url, { timeout: 15000 });
     const html = await response.text();
     const text = html.toLowerCase();
 
-    const keywords = [
-      'apply for credit',
-      'credit application',
-      'finance application',
-      'get pre-approved',
-      'apply now'
-    ];
+    let matchedKeywords = [];
 
     // 1. Check body text
-    const hasCreditAppText = keywords.some((kw) => text.includes(kw));
+    KEYWORDS.forEach((kw) => {
+      if (text.includes(kw)) {
+        matchedKeywords.push(kw);
+      }
+    });
+    const hasCreditAppText = matchedKeywords.length > 0;
 
     // 2. Check links/buttons
     const $ = cheerio.load(html);
-    const links = [];
     $('a, button').each((_, el) => {
       const txt = $(el).text().toLowerCase();
       const href = ($(el).attr('href') || '').toLowerCase();
-      links.push(txt, href);
+      KEYWORDS.forEach((kw) => {
+        if (txt.includes(kw) || href.includes(kw)) {
+          matchedKeywords.push(kw);
+        }
+      });
     });
-
-    const hasCreditAppLink = keywords.some((kw) =>
-      links.some((l) => l.includes(kw))
-    );
+    const hasCreditAppLink = matchedKeywords.length > 0;
 
     res.json({
       url,
@@ -156,7 +173,8 @@ app.get('/dealer/check', async (req, res) => {
       foundBy: {
         text: hasCreditAppText,
         link: hasCreditAppLink
-      }
+      },
+      matchedKeywords: [...new Set(matchedKeywords)] // remove duplicates
     });
   } catch (err) {
     console.error(`❌ Error fetching dealer site: ${err.message}`);
@@ -167,4 +185,5 @@ app.get('/dealer/check', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Render app running on port ${PORT}`);
+  console.log(`📋 Using keywords: ${KEYWORDS.join(', ')}`);
 });
