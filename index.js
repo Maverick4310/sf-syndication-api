@@ -43,7 +43,7 @@ const LINK_TRIGGERS = [
 let accessToken = null;
 
 // --------------------------------------------------
-// Helper: Normalize and Resolve URL with Fallbacks
+// Helper: Normalize and Resolve URL with Redirects
 // --------------------------------------------------
 async function resolveUrl(rawUrl) {
   if (!rawUrl) return null;
@@ -69,9 +69,9 @@ async function resolveUrl(rawUrl) {
   // Try each URL until one responds
   for (let url of attempts) {
     try {
-      const resp = await fetch(url, { method: "HEAD", redirect: "follow", timeout: 5000 });
+      const resp = await fetch(url, { method: "GET", redirect: "follow", timeout: 8000 });
       if (resp.status >= 200 && resp.status < 400) {
-        return resp.url; // ✅ capture final resolved URL after redirects
+        return resp.url; // ✅ final URL after redirect
       }
     } catch (err) {
       // continue to next attempt
@@ -190,10 +190,10 @@ app.get('/dealer/check', async (req, res) => {
     let siteActive = false;
     let statusCode = null;
     try {
-      const headResp = await fetch(resolvedUrl, { method: 'HEAD', redirect: "follow", timeout: 5000 });
+      const headResp = await fetch(resolvedUrl, { method: 'GET', redirect: "follow", timeout: 8000 });
       statusCode = headResp.status;
       siteActive = statusCode >= 200 && statusCode < 400;
-      resolvedUrl = headResp.url; // update with final redirect
+      resolvedUrl = headResp.url; // ✅ update with final redirect
     } catch (err) {
       siteActive = false;
     }
